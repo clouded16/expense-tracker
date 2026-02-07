@@ -15,6 +15,8 @@ from services.opportunities import (
     identify_high_frequency_expenses,
     identify_recurring_patterns
 )
+from models.feedback import FeedbackCreate
+from models.feedback_orm import Feedback
 
 
 
@@ -195,3 +197,20 @@ def get_coaching_feed(
     opportunities += identify_recurring_patterns(expense_data)
 
     return build_coaching_feed(feasibility, opportunities)
+
+@app.post("/feedback")
+def submit_feedback(
+    feedback: FeedbackCreate,
+    db: Session = Depends(get_db)
+):
+    db_feedback = Feedback(
+        insight_type=feedback.insight_type,
+        insight_reference=feedback.insight_reference,
+        action=feedback.action
+    )
+
+    db.add(db_feedback)
+    db.commit()
+    db.refresh(db_feedback)
+
+    return {"status": "feedback recorded"}
