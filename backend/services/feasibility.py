@@ -74,3 +74,4 @@ def analyze_goal_feasibility(
         "feasibility_status": feasibility,
         "message": message
     }
+

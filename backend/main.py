@@ -1,6 +1,9 @@
 from fastapi import FastAPI, Depends
 from sqlalchemy.orm import Session
+from datetime import date
 
+from services.feasibility import analyze_goal_feasibility
+from models.feasibility import GoalFeasibilityResponse
 from database import get_db, create_tables
 from models.expense import ExpenseCreate, ExpenseResponse
 from models.expense_orm import Expense
@@ -105,3 +108,42 @@ def get_goals(db: Session = Depends(get_db)):
         for g in goals
     ]
 
+@app.get(
+    "/goals/{goal_id}/feasibility",
+    response_model=GoalFeasibilityResponse
+)
+def get_goal_feasibility(
+    goal_id: int,
+    db: Session = Depends(get_db)
+):
+    # 1. Fetch goal
+    goal = db.query(Goal).filter(Goal.id == goal_id).first()
+    if not goal:
+        raise HTTPException(status_code=404, detail="Goal not found")
+
+    # 2. Fetch expenses
+    expenses = db.query(Expense).all()
+
+    # 3. Adapt data for service layer
+    expense_data = [
+        {
+            "amount": e.amount,
+            "date": e.transaction_date
+        }
+        for e in expenses
+    ]
+
+    goal_data = {
+        "id": goal.id,
+        "target_amount": goal.target_amount,
+        "target_date": goal.target_date
+    }
+
+    # 4. Call feasibility engine
+    result = analyze_goal_feasibility(
+        expenses=expense_data,
+        goal=goal_data,
+        today=date.today()
+    )
+
+    return result
