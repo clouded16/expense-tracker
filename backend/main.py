@@ -17,6 +17,8 @@ from services.opportunities import (
 )
 from models.feedback import FeedbackCreate
 from models.feedback_orm import Feedback
+from services.personalization import apply_personalization
+from services.ai_coach import rephrase_insights
 
 
 
@@ -196,7 +198,30 @@ def get_coaching_feed(
     opportunities += identify_high_frequency_expenses(expense_data)
     opportunities += identify_recurring_patterns(expense_data)
 
-    return build_coaching_feed(feasibility, opportunities)
+    # Build base coaching feed
+    feed = build_coaching_feed(feasibility, opportunities)
+
+    # Fetch all feedback
+    feedback_entries = db.query(Feedback).all()
+
+    feedback_data = [
+        {
+            "insight_type": f.insight_type,
+            "insight_reference": f.insight_reference,
+            "action": f.action,
+            "created_at": f.created_at
+        }
+        for f in feedback_entries
+    ]
+
+    # Apply personalization
+    personalized_feed = apply_personalization(feed, feedback_data)
+
+    ai_feed = rephrase_insights(personalized_feed, tone="coach")
+
+    return ai_feed
+
+
 
 @app.post("/feedback")
 def submit_feedback(
