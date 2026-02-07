@@ -9,6 +9,12 @@ from models.expense import ExpenseCreate, ExpenseResponse
 from models.expense_orm import Expense
 from models.goal import GoalCreate, GoalResponse
 from models.goal_orm import Goal
+from services.coaching_feed import build_coaching_feed
+from services.opportunities import (
+    identify_category_overspend_opportunities,
+    identify_high_frequency_expenses,
+    identify_recurring_patterns
+)
 
 
 
@@ -147,3 +153,45 @@ def get_goal_feasibility(
     )
 
     return result
+
+@app.get("/coaching-feed/{goal_id}")
+def get_coaching_feed(
+    goal_id: int,
+    db: Session = Depends(get_db)
+):
+    # Fetch goal
+    goal = db.query(Goal).filter(Goal.id == goal_id).first()
+    if not goal:
+        raise HTTPException(status_code=404, detail="Goal not found")
+
+    # Fetch expenses
+    expenses = db.query(Expense).all()
+
+    expense_data = [
+        {
+            "amount": e.amount,
+            "category": e.category,
+            "merchant": getattr(e, "merchant", None),
+            "date": e.transaction_date
+        }
+        for e in expenses
+    ]
+
+    goal_data = {
+        "id": goal.id,
+        "target_amount": goal.target_amount,
+        "target_date": goal.target_date
+    }
+
+    feasibility = analyze_goal_feasibility(
+        expenses=expense_data,
+        goal=goal_data,
+        today=date.today()
+    )
+
+    opportunities = []
+    opportunities += identify_category_overspend_opportunities(expense_data)
+    opportunities += identify_high_frequency_expenses(expense_data)
+    opportunities += identify_recurring_patterns(expense_data)
+
+    return build_coaching_feed(feasibility, opportunities)
