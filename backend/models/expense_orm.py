@@ -1,19 +1,18 @@
-from sqlalchemy import Column, Integer, Float, String, Date, DateTime
+from sqlalchemy import Column, Integer, Numeric, Date, ForeignKey, TIMESTAMP
 from sqlalchemy.sql import func
 
-from .base import Base
+from models.base import Base
 
 class Expense(Base):
-    __tablename__ = "expenses"
+    __tablename__ = "expense"
+
     id = Column(Integer, primary_key=True, index=True)
-
-    amount = Column(Float, nullable=False)
-    currency = Column(String, default="INR", nullable=False)
-
-    category = Column(String, nullable=False)
-    merchant_raw = Column(String, nullable=True)
-
-    source = Column(String, nullable=False)
-
+    user_id = Column(Integer, nullable=False)
+    amount = Column(Numeric, nullable=False)
     transaction_date = Column(Date, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    merchant_id = Column(Integer, ForeignKey("merchant.id"), nullable=True)
+    category_id = Column(Integer, ForeignKey("category.id"), nullable=True)
+    source_id = Column(Integer, ForeignKey("source.id"), nullable=True)
+
+    created_at = Column(TIMESTAMP, server_default=func.now())

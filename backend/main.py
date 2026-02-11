@@ -1,10 +1,15 @@
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
+
+from database import get_db
+from models.expense_orm import Expense
+
 from datetime import date
+from pydantic import BaseModel
 
 from services.feasibility import analyze_goal_feasibility
 from models.feasibility import GoalFeasibilityResponse
-from database import get_db, create_tables
+
 from models.expense import ExpenseCreate, ExpenseResponse
 from models.expense_orm import Expense
 from models.goal import GoalCreate, GoalResponse
@@ -20,12 +25,39 @@ from models.feedback_orm import Feedback
 from services.personalization import apply_personalization
 from services.ai_coach import rephrase_insights
 
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
+
+logger = logging.getLogger("expense-tracker")
+
+from sqlalchemy import text
+from database import engine
 
 
 
 
 app = FastAPI()
-create_tables()
+
+@app.get("/health")
+def health_check():
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+        logger.info("Health check passed")
+        return {
+            "status": "ok",
+            "database": "connected"
+        }
+    except Exception as e:
+        logger.error("Health check failed", exc_info=True)
+        return {
+            "status": "error",
+            "database": "unreachable"
+        }
 
 
 @app.get("/")
@@ -33,48 +65,36 @@ def root():
     return {"message": "Hello, the server is running"}
 
 
-@app.post("/expenses", response_model=ExpenseResponse)
-def create_expense(
-    expense: ExpenseCreate,
-    db: Session = Depends(get_db)
-):
-    db_expense = Expense(
-        amount=expense.amount,
-        currency="INR",
-        category=expense.category,
-        merchant_raw=expense.description,
-        source="manual",
-        transaction_date=expense.date
-    )
-
-    db.add(db_expense)
-    db.commit()
-    db.refresh(db_expense)
-
-    return ExpenseResponse(
-    id=db_expense.id,
-    amount=db_expense.amount,
-    category=db_expense.category,
-    description=db_expense.merchant_raw,
-    date=db_expense.transaction_date
-)
 
 
+class ExpenseCreate(BaseModel):
+    user_id: int
+    amount: float
+    transaction_date: date
 
-
-@app.get("/expenses", response_model=list[ExpenseResponse])
-def get_expenses(db: Session = Depends(get_db)):
-    expenses = db.query(Expense).all()
-    return [
-        ExpenseResponse(
-            id=e.id,
-            amount=e.amount,
-            category=e.category,
-            description=e.merchant_raw,
-            date=e.transaction_date
+@app.post("/expenses")
+def create_expense(expense: ExpenseCreate, db: Session = Depends(get_db)):
+    try:
+        db_expense = Expense(
+            user_id=expense.user_id,
+            amount=expense.amount,
+            transaction_date=expense.transaction_date
         )
-        for e in expenses
-    ]
+        db.add(db_expense)
+        db.commit()
+        db.refresh(db_expense)
+        return db_expense
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+
+@app.get("/expenses")
+def get_expenses(db: Session = Depends(get_db)):
+    return db.query(Expense).all()
+
 
 
 @app.post("/goals", response_model=GoalResponse)
