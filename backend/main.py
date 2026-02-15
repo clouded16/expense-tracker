@@ -14,16 +14,10 @@ from models.expense import ExpenseCreate, ExpenseResponse
 from models.expense_orm import Expense
 from models.goal import GoalCreate, GoalResponse
 from models.goal_orm import Goal
-from services.coaching_feed import build_coaching_feed
-from services.opportunities import (
-    identify_category_overspend_opportunities,
-    identify_high_frequency_expenses,
-    identify_recurring_patterns
-)
+from services.coaching_engine import generate_coaching_insights
 from models.feedback import FeedbackCreate
 from models.feedback_orm import Feedback
-from services.personalization import apply_personalization
-from services.ai_coach import rephrase_insights
+from models.insight import Insight
 
 import logging
 
@@ -178,7 +172,7 @@ def get_goal_feasibility(
 
     return result
 
-@app.get("/coaching-feed/{goal_id}")
+@app.get("/coaching-feed/{goal_id}", response_model=list[Insight])
 def get_coaching_feed(
     goal_id: int,
     db: Session = Depends(get_db)
@@ -207,39 +201,13 @@ def get_coaching_feed(
         "target_date": goal.target_date
     }
 
-    feasibility = analyze_goal_feasibility(
+    insights = generate_coaching_insights(
         expenses=expense_data,
         goal=goal_data,
         today=date.today()
     )
 
-    opportunities = []
-    opportunities += identify_category_overspend_opportunities(expense_data)
-    opportunities += identify_high_frequency_expenses(expense_data)
-    opportunities += identify_recurring_patterns(expense_data)
-
-    # Build base coaching feed
-    feed = build_coaching_feed(feasibility, opportunities)
-
-    # Fetch all feedback
-    feedback_entries = db.query(Feedback).all()
-
-    feedback_data = [
-        {
-            "insight_type": f.insight_type,
-            "insight_reference": f.insight_reference,
-            "action": f.action,
-            "created_at": f.created_at
-        }
-        for f in feedback_entries
-    ]
-
-    # Apply personalization
-    personalized_feed = apply_personalization(feed, feedback_data)
-
-    ai_feed = rephrase_insights(personalized_feed, tone="coach")
-
-    return ai_feed
+    return insights
 
 
 
