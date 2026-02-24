@@ -1,7 +1,8 @@
 from sqlalchemy import Column, Integer, Numeric, Date, ForeignKey, TIMESTAMP
 from sqlalchemy.sql import func
-
+from sqlalchemy.orm import relationship
 from models.base import Base
+
 
 class Expense(Base):
     __tablename__ = "expense"
@@ -16,3 +17,8 @@ class Expense(Base):
     source_id = Column(Integer, ForeignKey("source.id"), nullable=True)
 
     created_at = Column(TIMESTAMP, server_default=func.now())
+
+    # 🔥 ADD THESE RELATIONSHIPS
+    category = relationship("Category")
+    merchant = relationship("Merchant")
+    source = relationship("Source")
