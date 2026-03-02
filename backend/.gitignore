@@ -17,6 +17,16 @@ __pycache__/
 .env
 backend/.env
 
+*.swp
+*.swo
+*.swm
+uploads/
+*.jpg
+*.txt
+
+
+
+
 # Flutter
 mobile/build/
 mobile/.dart_tool/

@@ -1,19 +1,21 @@
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
 from models.refresh_token_orm import RefreshToken
-from database import get_db, engine
+from database import get_db, engine, SessionLocal
 from models.expense_orm import Expense
 from models.auth import RegisterRequest, AuthResponse, RefreshRequest, LoginRequest
 from models.user_orm import User
 from services.auth import hash_password, create_access_token, create_refresh_token, verify_password,get_current_user,decode_token
-from datetime import date,datetime
-from pydantic import BaseModel
+from datetime import date, datetime, timezone
 from services.feasibility import analyze_goal_feasibility
 from models.feasibility import GoalFeasibilityResponse
 from models.category_orm import Category
 from models.merchant_orm import Merchant
+from models.merchant_category_learning_orm import MerchantCategoryLearning
 from models.source_orm import Source
 from models.expense import ExpenseCreate, ExpenseResponse
+from pydantic import BaseModel, ConfigDict
+from typing import Dict, Any, List, Optional
 from models.expense_orm import Expense
 from models.goal import GoalCreate, GoalResponse
 from models.goal_orm import Goal
@@ -37,21 +39,81 @@ logging.basicConfig(
 
 logger = logging.getLogger("expense-tracker")
 
+from services.ingestion import create_expense_from_input
+from services.ingestion_service import process_ingestion
+from models.ingestion_log_orm import IngestionLog
+from services.ingestion import INPUT_TYPE_TO_SOURCE
+from fastapi import UploadFile, File
+from pathlib import Path
+import uuid
+
+from services.ocr_utils import save_upload_file, image_from_bytes
+import pytesseract
+from pdf2image import convert_from_bytes
+
+
 from models.budget_orm import Budget
 from models.budget import BudgetRequest
 
-from sqlalchemy import text
-from sqlalchemy import and_
-from datetime import datetime, timezone
-from passlib.context import CryptContext
+from sqlalchemy import text, func
 from models.base import Base
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
+from PIL import ImageEnhance, ImageFilter
 
 
 app = FastAPI()
 
 Base.metadata.create_all(bind=engine)
+
+DEFAULT_SOURCE_NAMES = (
+    "manual",
+    "sms",
+    "email",
+    "notification",
+    "bank_sync",
+    "csv_import",
+    "statement_upload",
+    "api",
+    "webhook",
+)
+
+
+def seed_default_sources(db: Session) -> int:
+    existing_source_names = {
+        name.strip().lower()
+        for (name,) in db.query(Source.name).all()
+        if name
+    }
+
+    missing_source_names = [
+        name
+        for name in DEFAULT_SOURCE_NAMES
+        if name.lower() not in existing_source_names
+    ]
+
+    if not missing_source_names:
+        return 0
+
+    db.add_all([Source(name=name) for name in missing_source_names])
+    db.commit()
+
+    logger.info(
+        "Seeded source values: %s",
+        ", ".join(missing_source_names)
+    )
+    return len(missing_source_names)
+
+
+@app.on_event("startup")
+def ensure_source_seed_data():
+    db = SessionLocal()
+    try:
+        seed_default_sources(db)
+    except Exception:
+        db.rollback()
+        logger.exception("Failed to seed source reference data")
+        raise
+    finally:
+        db.close()
 
 @app.get("/health")
 def health_check():
@@ -82,76 +144,414 @@ def create_expense(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    # Delegate to ingestion layer; keep endpoint free of business logic
+    try:
+        return create_expense_from_input(
+            db=db,
+            user=current_user,
+            input_type=(expense.source_name or "manual"),
+            payload=expense.model_dump(),
+        )
+    except HTTPException:
+        # pass through HTTP errors from service layer
+        raise
+    except Exception as exc:
+        logger.exception("create_expense.handler_failure user_id=%s", getattr(current_user, "id", None))
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+class IngestionRequest(BaseModel):
+    input_type: str
+    payload: Dict[str, Any]
+
+
+class IngestionLogResponse(BaseModel):
+    id: int
+    input_type: str
+    status: str
+    confidence_score: Optional[float] = None
+    parsed_amount: Optional[float] = None
+    parsed_category: Optional[str] = None
+    parsed_merchant: Optional[str] = None
+    expense_id: Optional[int] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ApproveRequest(BaseModel):
+    merchant_name: Optional[str] = None
+    category_name: Optional[str] = None
+
+
+@app.post("/ingest")
+def ingest(
+    req: IngestionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    logger.info("ingest.submit input_type=%s user_id=%s", req.input_type, getattr(current_user, "id", None))
+
+    # create pending log and process synchronously for now
+    try:
+        log = process_ingestion(
+            db=db,
+            user=current_user,
+            input_type=req.input_type,
+            raw_text=req.payload.get("raw_text") if req.payload and "raw_text" in req.payload else None,
+            payload=req.payload,
+            metadata=None,
+        )
+        return {"ingestion_id": log.id, "status": log.status}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("ingest.failure input_type=%s user_id=%s", req.input_type, getattr(current_user, "id", None))
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/ingest/ocr", response_model=IngestionLogResponse)
+async def ingest_ocr(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    uploads_dir = Path("uploads") / "receipts"
+    uploads_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        user_id = current_user.id
+        dest_path, file_bytes = save_upload_file(file, uploads_dir)
+    except Exception:
+        logger.exception("ingest_ocr.save_failure user_id=%s", getattr(current_user, "id", None))
+        raise HTTPException(status_code=500, detail="Failed to save upload")
+
+    try:
+        # Extract text
+        if file.content_type == "application/pdf":
+            pages = convert_from_bytes(file_bytes, first_page=1, last_page=1)
+            if not pages:
+                raise Exception("No pages found in PDF")
+            img = pages[0]
+        else:
+            img = image_from_bytes(file_bytes)
+
+        
+
+        # Convert to grayscale (safe)
+        img = img.convert("L")
+
+        # Slight contrast boost (not aggressive)
+        from PIL import ImageEnhance, ImageFilter
+
+        enhancer = ImageEnhance.Contrast(img)
+        img = enhancer.enhance(1.4)
+
+        # Mild sharpening
+        img = img.filter(ImageFilter.UnsharpMask(radius=1, percent=120, threshold=3))
+
+        # OCR with better config
+        custom_config = r'--oem 3 --psm 6'
+        raw_text = pytesseract.image_to_string(img, config=custom_config)
+        raw_text = "\n".join(
+            [ln.strip() for ln in raw_text.splitlines() if ln.strip()]
+        )
+        print("Image size:", img.size)
+        print("----- RAW OCR TEXT -----")
+        print(raw_text)
+        print("------------------------")
+
+    except Exception:
+        logger.exception("ingest_ocr.ocr_failure user_id=%s", getattr(current_user, "id", None))
+        raise HTTPException(status_code=500, detail="OCR extraction failed")
+
+    try:
+        # IMPORTANT: DO NOT use relative_to()
+        safe_relative_path = f"receipts/{dest_path.name}"
+
+        log = process_ingestion(
+            db=db,
+            user=current_user,
+            input_type="ocr",
+            raw_text=raw_text,
+            payload=None,
+            metadata={"file_path": safe_relative_path},
+        )
+
+        return IngestionLogResponse.from_orm(log)
+
+    except Exception:
+        logger.exception("ingest_ocr.processing_failure user_id=%s", getattr(current_user, "id", None))
+        raise HTTPException(status_code=500, detail="Ingestion processing failed")
 
 
-        # ---- Resolve Category (user-specific) ----
-        category = None
-        if expense.category_name:
-            category = db.query(Category).filter(
-                Category.user_id == user_id,
-                Category.name == expense.category_name
-            ).first()
+@app.get("/ingestion-logs")
+def get_ingestion_logs(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    logs = (
+        db.query(IngestionLog)
+        .filter(IngestionLog.user_id == current_user.id)
+        .order_by(IngestionLog.created_at.desc())
+        .all()
+    )
 
-            if not category:
-                category = Category(
-                    user_id=user_id,
-                    name=expense.category_name
+    return [
+        {
+            "id": l.id,
+            "input_type": l.input_type,
+            "raw_payload": l.raw_payload,
+            "parsed_amount": l.parsed_amount,
+            "parsed_merchant": l.parsed_merchant,
+            "parsed_category": l.parsed_category,
+            "confidence_score": l.confidence_score,
+            "status": l.status,
+            "expense_id": l.expense_id,
+            "error_message": l.error_message,
+            "created_at": l.created_at,
+        }
+        for l in logs
+    ]
+
+
+@app.get("/ingestion/{ingestion_id}")
+def get_ingestion_log(
+    ingestion_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    log = db.query(IngestionLog).filter(IngestionLog.id == ingestion_id, IngestionLog.user_id == current_user.id).first()
+    if not log:
+        raise HTTPException(status_code=404, detail="Ingestion log not found")
+
+    return {
+        "id": log.id,
+        "status": log.status,
+        "confidence_score": log.confidence_score,
+        "parsed_data": {
+            "amount": log.parsed_amount,
+            "category": log.parsed_category,
+            "merchant": log.parsed_merchant,
+        },
+        "expense_id": log.expense_id,
+        "error_message": log.error_message,
+    }
+
+
+@app.patch("/ingestion/{ingestion_id}/approve", response_model=IngestionLogResponse)
+def approve_ingestion(
+    ingestion_id: int,
+    data: ApproveRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    log = (
+        db.query(IngestionLog)
+        .filter(
+            IngestionLog.id == ingestion_id,
+            IngestionLog.user_id == current_user.id
+        )
+        .first()
+    )
+
+    if not log:
+        raise HTTPException(status_code=404, detail="Ingestion log not found")
+
+    if log.status != "needs_review":
+        raise HTTPException(
+            status_code=400,
+            detail="Only logs with status 'needs_review' can be approved"
+        )
+
+    amount = log.parsed_amount
+    category_name = data.category_name or log.parsed_category
+    merchant_name = data.merchant_name or log.parsed_merchant
+
+    if amount is None:
+        raise HTTPException(
+            status_code=400,
+            detail="No parsed amount available"
+        )
+
+    # Determine transaction date
+    td_val = date.today()
+
+    try:
+        # -----------------------------
+        # Resolve / Create Category
+        # -----------------------------
+        category_obj = None
+        if category_name:
+            category_name = category_name.strip()
+            category_obj = (
+                db.query(Category)
+                .filter(
+                    Category.user_id == current_user.id,
+                    Category.name == category_name
                 )
-                db.add(category)
-                db.commit()
-                db.refresh(category)
+                .first()
+            )
+            if not category_obj:
+                category_obj = Category(
+                    user_id=current_user.id,
+                    name=category_name
+                )
+                db.add(category_obj)
+                db.flush()
 
-        # ---- Resolve Merchant (global) ----
-        merchant = None
-        if expense.merchant_name:
-            merchant = db.query(Merchant).filter(
-                Merchant.name == expense.merchant_name
-            ).first()
+        # -----------------------------
+        # Resolve / Create Merchant
+        # -----------------------------
+        merchant_obj = None
+        if merchant_name:
+            merchant_name = merchant_name.strip()
+            merchant_obj = (
+                db.query(Merchant)
+                .filter(Merchant.name == merchant_name)
+                .first()
+            )
+            if not merchant_obj:
+                merchant_obj = Merchant(name=merchant_name)
+                db.add(merchant_obj)
+                db.flush()
 
-            if not merchant:
-                merchant = Merchant(name=expense.merchant_name)
-                db.add(merchant)
-                db.commit()
-                db.refresh(merchant)
+        # -----------------------------
+        # Resolve Source
+        # -----------------------------
+        requested_source_name = INPUT_TYPE_TO_SOURCE.get(
+            log.input_type,
+            log.input_type
+        )
 
-        # ---- Resolve Source (fixed) ----
-        source = db.query(Source).filter(
-            Source.name == expense.source_name
-        ).first()
+        source_obj = (
+            db.query(Source)
+            .filter(func.lower(Source.name) == requested_source_name.lower())
+            .first()
+        )
 
-        if not source:
-            raise HTTPException(status_code=400, detail="Invalid source")
+        if not source_obj:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid or unknown source"
+            )
 
-        # ---- Create Expense ----
+        # -----------------------------
+        # Create Expense
+        # -----------------------------
         db_expense = Expense(
-            user_id=user_id,
-            amount=expense.amount,
-            transaction_date=expense.transaction_date,
-            category_id=category.id if category else None,
-            merchant_id=merchant.id if merchant else None,
-            source_id=source.id
+            user_id=current_user.id,
+            amount=amount,
+            transaction_date=td_val,
+            category_id=category_obj.id if category_obj else None,
+            merchant_id=merchant_obj.id if merchant_obj else None,
+            source_id=source_obj.id,
+            ingestion_type=log.input_type,
         )
 
         db.add(db_expense)
+        db.flush()
+
+        # -----------------------------
+        # Update Log
+        # -----------------------------
+        log.status = "parsed"
+        log.expense_id = db_expense.id
+        log.confidence_score = log.confidence_score or 1.0
+        db.add(log)
+
+        # -----------------------------
+        # Persist Merchant Learning
+        # -----------------------------
+        if merchant_name and category_name:
+            merchant_key = merchant_name.lower().strip()
+
+            exists = (
+                db.query(MerchantCategoryLearning)
+                .filter(
+                    MerchantCategoryLearning.user_id == current_user.id,
+                    MerchantCategoryLearning.merchant_key == merchant_key
+                )
+                .first()
+            )
+
+            if not exists:
+                learning = MerchantCategoryLearning(
+                    user_id=current_user.id,
+                    merchant_key=merchant_key,
+                    category_name=category_name
+                )
+                db.add(learning)
+
         db.commit()
-        db.refresh(db_expense)
+        db.refresh(log)
 
-        return ExpenseResponse(
-            id=db_expense.id,
-            amount=db_expense.amount,
-            transaction_date=db_expense.transaction_date,
-            category_name=category.name if category else None,
-            merchant_name=merchant.name if merchant else None,
-            source_name=source.name if source else None,
-            created_at=db_expense.created_at
-        )
+        return IngestionLogResponse.from_orm(log)
 
-    except Exception as e:
+    except HTTPException:
+        raise
+    except Exception as exc:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(
+            "approve_ingestion.failure ingestion_id=%s user_id=%s",
+            ingestion_id,
+            getattr(current_user, "id", None)
+        )
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.patch("/ingestion/{ingestion_id}/reject", response_model=IngestionLogResponse)
+def reject_ingestion(
+    ingestion_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    log = db.query(IngestionLog).filter(IngestionLog.id == ingestion_id, IngestionLog.user_id == current_user.id).first()
+    if not log:
+        raise HTTPException(status_code=404, detail="Ingestion log not found")
+
+    if log.status != "needs_review":
+        raise HTTPException(status_code=400, detail="Only logs with status 'needs_review' can be rejected")
+
+    try:
+        log.status = "rejected"
+        db.add(log)
+        db.commit()
+        db.refresh(log)
+        return IngestionLogResponse.from_orm(log)
+    except Exception as exc:
+        db.rollback()
+        logger.exception("reject_ingestion.failure ingestion_id=%s user_id=%s", ingestion_id, getattr(current_user, "id", None))
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/ingestion")
+def list_ingestion_logs(
+    status: Optional[str] = None,
+    limit: int = 20,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    q = db.query(IngestionLog).filter(IngestionLog.user_id == current_user.id)
+    if status:
+        q = q.filter(IngestionLog.status == status)
+
+    logs = q.order_by(IngestionLog.created_at.desc()).limit(limit).all()
+
+    class IngestionLogResponse(BaseModel):
+        id: int
+        input_type: str
+        status: str
+        confidence_score: Optional[float] = None
+        parsed_amount: Optional[float] = None
+        parsed_category: Optional[str] = None
+        parsed_merchant: Optional[str] = None
+        expense_id: Optional[int] = None
+        created_at: datetime
+
+        model_config = ConfigDict(from_attributes=True)
+
+    return [IngestionLogResponse.from_orm(l) for l in logs]
 
 
 
@@ -263,10 +663,22 @@ def delete_expense(
     if not db_expense:
         raise HTTPException(status_code=404, detail="Expense not found")
 
-    db.delete(db_expense)
-    db.commit()
+    try:
+        # Detach ingestion logs first
+        db.query(IngestionLog).filter(
+            IngestionLog.expense_id == expense_id
+        ).update({"expense_id": None})
 
-    return {"message": "Expense deleted"}
+        db.delete(db_expense)
+        db.commit()
+
+        return {"message": "Expense deleted"}
+
+    except Exception:
+        db.rollback()
+        logger.exception("delete_expense.failure expense_id=%s user_id=%s",
+                         expense_id, getattr(current_user, "id", None))
+        raise HTTPException(status_code=500, detail="Failed to delete expense")
 
 @app.post("/goals", response_model=GoalResponse)
 def create_goal(
@@ -703,5 +1115,4 @@ def set_budget(
     db.commit()
 
     return {"monthly_amount": float(budget.monthly_amount)}
-
 

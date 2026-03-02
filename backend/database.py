@@ -32,9 +32,3 @@ def get_db():
     finally:
         db.close()
 
-
-from models.base import Base
-from models import expense_orm
-from models import category_orm
-from models import merchant_orm
-from models import source_orm
