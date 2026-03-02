@@ -6,10 +6,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 final apiClientProvider = Provider((ref) => ApiClient());
 
 class ApiClient {
-  static String get baseUrl {
-    if (kIsWeb) return 'http://localhost:8000';
-    return 'http://192.168.29.27:8000'; // your PC IP
-  }
+  static const String baseUrl =
+    String.fromEnvironment('API_BASE_URL', defaultValue: 'http://localhost:8000');
 
   final Dio dio;
   final FlutterSecureStorage storage;
@@ -17,31 +15,33 @@ class ApiClient {
   ApiClient()
       : dio = Dio(BaseOptions(baseUrl: baseUrl)),
         storage = const FlutterSecureStorage() {
+          print("API Client initialized with base URL: $baseUrl");
     dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
           final token = await storage.read(key: 'auth_token');
+
           if (token != null) {
             options.headers['Authorization'] = 'Bearer $token';
           }
+
           return handler.next(options);
         },
 
         onError: (error, handler) async {
           if (error.response?.statusCode == 401) {
+
             final refreshed = await _attemptRefresh();
 
             if (refreshed) {
-              // Retry original request
-              final requestOptions = error.requestOptions;
-
               final newToken = await storage.read(key: 'auth_token');
 
-              requestOptions.headers['Authorization'] = 'Bearer $newToken';
+              error.requestOptions.headers['Authorization'] =
+                  'Bearer $newToken';
 
-              final clonedRequest = await dio.fetch(requestOptions);
+              final retryResponse = await dio.fetch(error.requestOptions);
 
-              return handler.resolve(clonedRequest);
+              return handler.resolve(retryResponse);
             }
           }
 
@@ -62,9 +62,10 @@ class ApiClient {
         data: {
           'refresh_token': refreshToken,
         },
-        options: Options(headers: {
-          'Authorization': null, // remove old header
-        }),
+        options: Options(
+          headers: {},
+          extra: {'requiresAuth': false},
+        ),
       );
 
       final newAccess = response.data['access_token'];

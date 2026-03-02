@@ -2,9 +2,21 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/api_client.dart';
 import '../domain/expense.dart';
+import '../../auth/application/auth_controller.dart';
 
-final expenseRepositoryProvider = Provider((ref) {
+/// Repository Provider
+final expenseRepositoryProvider = Provider<ExpenseRepository>((ref) {
   return ExpenseRepository(ref.watch(apiClientProvider));
+});
+
+/// 🔥 Expenses Future Provider 
+final expensesProvider = FutureProvider<List<Expense>>((ref) async {
+  final authStatus = ref.watch(authControllerProvider);
+  if (authStatus != AuthStatus.authenticated) {
+    return [];
+  }
+  final repo = ref.watch(expenseRepositoryProvider);
+  return repo.getExpenses();
 });
 
 class ExpenseRepository {
@@ -25,8 +37,8 @@ class ExpenseRepository {
   }
 
   Future<Expense> updateExpense(Expense expense) async {
-    final response = await _client.put('/expenses/${expense.id}', expense.toJson());
-
+    final response =
+        await _client.put('/expenses/${expense.id}', expense.toJson());
     return Expense.fromJson(response.data);
   }
 
@@ -35,6 +47,6 @@ class ExpenseRepository {
       throw Exception("Invalid expense ID");
     }
 
-   await _client.delete('/expenses/$id');
-  } 
+    await _client.delete('/expenses/$id');
+  }
 }

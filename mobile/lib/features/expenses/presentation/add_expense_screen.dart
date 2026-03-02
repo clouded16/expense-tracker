@@ -5,6 +5,7 @@ import '../data/expense_repository.dart';
 import '../domain/expense.dart';
 import 'package:mobile/features/expenses/presentation/expense_list_screen.dart'; 
 import 'package:mobile/features/dashboard/presentation/dashboard_screen.dart';
+import 'package:mobile/screens/receipt_upload_screen.dart';
 
 class AddExpenseScreen extends ConsumerStatefulWidget {
   final Expense? existingExpense;
@@ -103,6 +104,26 @@ class _AddExpenseScreenState extends ConsumerState<AddExpenseScreen> {
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
+            OutlinedButton.icon(
+              icon: const Icon(Icons.camera_alt),
+              label: const Text('Scan Receipt'),
+              onPressed: () async {
+                final result = await Navigator.push<bool?>(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const ReceiptUploadScreen(),
+                  ),
+                );
+
+                // If OCR created expense already → refresh and go back
+                if (result == true) {
+                  ref.invalidate(expensesProvider);
+                  ref.invalidate(dashboardStatsProvider);
+                  if (mounted) context.go('/dashboard');
+                }
+              },
+            ),
+            const SizedBox(height: 16),
             TextField(
               controller: _amountController,
               decoration: const InputDecoration(labelText: 'Amount (₹)'),

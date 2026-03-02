@@ -1,6 +1,9 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../../core/api_client.dart';
+import '../../expenses/presentation/expense_list_screen.dart';
+import '../../dashboard/presentation/dashboard_screen.dart';
+import '../../expenses/data/expense_repository.dart';
 
 enum AuthStatus {
   unknown,
@@ -42,20 +45,21 @@ class AuthController extends StateNotifier<AuthStatus> {
   }
 
   Future<void> loginSuccess() async {
+    
     state = AuthStatus.authenticated;
   }
 
   Future<void> logout() async {
-    final api = ref.read(apiClientProvider);
+    state = AuthStatus.unauthenticated; // First
 
     try {
       final refresh = await storage.read(key: 'refresh_token');
       if (refresh != null) {
+        final api = ref.read(apiClientProvider);
         await api.post('/auth/logout', {'refresh_token': refresh});
       }
     } catch (_) {}
 
     await storage.deleteAll();
-    state = AuthStatus.unauthenticated;
   }
 }

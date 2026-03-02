@@ -21,21 +21,19 @@ final routerProvider = Provider<GoRouter>((ref) {
   final authStatus = ref.watch(authControllerProvider);
 
   return GoRouter(
-    initialLocation: '/login',
-    
-
+    initialLocation: '/dashboard',
     redirect: (context, state) {
       final isLoggedIn = authStatus == AuthStatus.authenticated;
-      final isLoggingIn = state.uri.path == '/login' ||
+      final isAuthRoute = state.uri.path == '/login' ||
           state.uri.path == '/register';
 
       // If not logged in → force login
-      if (!isLoggedIn && !isLoggingIn) {
+      if (!isLoggedIn && !isAuthRoute) {
         return '/login';
       }
 
       // If logged in → prevent going back to login/register
-      if (isLoggedIn && isLoggingIn) {
+      if (isLoggedIn && isAuthRoute) {
         return '/dashboard';
       }
 
@@ -126,4 +124,5 @@ class CashScopeApp extends ConsumerWidget {
       routerConfig: router,
     );
   }
-}
+} 
+
