@@ -29,8 +29,7 @@ def get_current_user(
     db: Session = Depends(get_db),
 ):
     token = credentials.credentials
-    print("DECODE SECRET_KEY:", SECRET_KEY)
-    print("DECODE ALGORITHM:", ALGORITHM)
+    
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
 
@@ -74,8 +73,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 
 def create_access_token(user: User):
-    print("ENCODE SECRET_KEY:", SECRET_KEY)
-    print("ENCODE ALGORITHM:", ALGORITHM)
+    
     expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     payload = {
         "sub": str(user.id),

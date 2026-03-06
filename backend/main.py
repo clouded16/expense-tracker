@@ -57,13 +57,16 @@ from models.budget import BudgetRequest
 
 from sqlalchemy import text, func
 from models.base import Base
-from PIL import ImageEnhance, ImageFilter
+from PIL import Image , ImageEnhance, ImageFilter
+import numpy as np
+from routers.google_auth import router as google_auth_router
+
 
 
 app = FastAPI()
 
 Base.metadata.create_all(bind=engine)
-
+app.include_router(google_auth_router)
 DEFAULT_SOURCE_NAMES = (
     "manual",
     "sms",
@@ -238,25 +241,66 @@ async def ingest_ocr(
 
         
 
-        # Convert to grayscale (safe)
-        img = img.convert("L")
+        # ----------------------------------------------------
+        # STABLE OCR PREPROCESSING (Production-Style)
+        # ----------------------------------------------------
 
-        # Slight contrast boost (not aggressive)
-        from PIL import ImageEnhance, ImageFilter
+        import numpy as np
+        import cv2
+        from PIL import Image
+        import pytesseract
 
-        enhancer = ImageEnhance.Contrast(img)
-        img = enhancer.enhance(1.4)
+        # Convert PIL to OpenCV
+        img_np = np.array(img)
 
-        # Mild sharpening
-        img = img.filter(ImageFilter.UnsharpMask(radius=1, percent=120, threshold=3))
+        # 1️⃣ Auto-rotate using Tesseract OSD
+        try:
+            osd = pytesseract.image_to_osd(img_np)
+            rotation = int(re.search(r"Rotate: (\d+)", osd).group(1))
+            if rotation != 0:
+                img_np = cv2.rotate(
+                    img_np,
+                    {
+                        90: cv2.ROTATE_90_CLOCKWISE,
+                        180: cv2.ROTATE_180,
+                        270: cv2.ROTATE_90_COUNTERCLOCKWISE
+                    }[rotation]
+                )
+        except Exception:
+            pass  # If OSD fails, continue
 
-        # OCR with better config
+        # 2️⃣ Convert to grayscale (proper)
+        gray = cv2.cvtColor(img_np, cv2.COLOR_BGR2GRAY)
+
+        # 3️⃣ Resize to stable DPI equivalent (~300 DPI height baseline)
+        target_height = 2000
+        scale = target_height / gray.shape[0]
+        gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+
+        # 4️⃣ Adaptive threshold (critical for receipts)
+        thresh = cv2.adaptiveThreshold(
+            gray,
+            255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY,
+            31,
+            15
+        )
+
+        # 5️⃣ Light morphological close to join broken characters
+        kernel = np.ones((2,2), np.uint8)
+        processed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+
+        # OCR config tuned for receipts
         custom_config = r'--oem 3 --psm 6'
-        raw_text = pytesseract.image_to_string(img, config=custom_config)
+
+        raw_text = pytesseract.image_to_string(processed, config=custom_config)
+
         raw_text = "\n".join(
             [ln.strip() for ln in raw_text.splitlines() if ln.strip()]
         )
-        print("Image size:", img.size)
+
+        print("Processed size:", processed.shape)
         print("----- RAW OCR TEXT -----")
         print(raw_text)
         print("------------------------")

@@ -30,6 +30,8 @@ from models import goal_orm
 from models import feedback_orm
 from models import refresh_token_orm
 from models import budget_orm
+from models import ingestion_log_orm
+from models import merchant_category_learning_orm
 
 target_metadata = Base.metadata
 
