@@ -1,6 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import '../../../core/api_client.dart';
+
+import '../../../core/auth/app_lock_service.dart';
 
 enum AuthStatus {
   unknown,
@@ -8,54 +8,22 @@ enum AuthStatus {
   unauthenticated,
 }
 
-final authControllerProvider =
-    StateNotifierProvider<AuthController, AuthStatus>(
-        (ref) => AuthController(ref));
-
-class AuthController extends StateNotifier<AuthStatus> {
-  final Ref ref;
-  final FlutterSecureStorage storage = const FlutterSecureStorage();
-
-  AuthController(this.ref) : super(AuthStatus.unknown) {
-    _initialize();
+final authControllerProvider = Provider<AuthStatus>((ref) {
+  final lock = ref.watch(appLockProvider);
+  switch (lock.status) {
+    case AppLockStatus.unlocked:
+      return AuthStatus.authenticated;
+    case AppLockStatus.locked:
+    case AppLockStatus.unavailable:
+      return AuthStatus.unauthenticated;
+    case AppLockStatus.unlocking:
+    case AppLockStatus.unknown:
+      return AuthStatus.unknown;
   }
+});
 
-  Future<void> _initialize() async {
-    final refreshToken = await storage.read(key: 'refresh_token');
-
-    print("Startup refresh token: $refreshToken");
-
-    if (refreshToken == null) {
-      state = AuthStatus.unauthenticated;
-      return;
-    }
-
-    final api = ref.read(apiClientProvider);
-
-    final success = await api.tryRefreshOnStartup();
-
-    print("Startup refresh result: $success");
-
-    state = success
-        ? AuthStatus.authenticated
-        : AuthStatus.unauthenticated;
-  }
-
-  Future<void> loginSuccess() async {
-    state = AuthStatus.authenticated;
-  }
-
+extension AuthControllerActions on WidgetRef {
   Future<void> logout() async {
-    final api = ref.read(apiClientProvider);
-
-    try {
-      final refresh = await storage.read(key: 'refresh_token');
-      if (refresh != null) {
-        await api.post('/auth/logout', {'refresh_token': refresh});
-      }
-    } catch (_) {}
-
-    await storage.deleteAll();
-    state = AuthStatus.unauthenticated;
+    await read(appLockProvider.notifier).lock();
   }
 }

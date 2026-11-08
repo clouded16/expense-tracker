@@ -1,0 +1,32 @@
+[
+  {
+    "policy_name": "LIC Jeevan Anand",
+    "min_term": "15 years",
+    "expected_return": 6.0,
+    "risk_level": "Low",
+    "benefits": "Life cover with maturity benefit and bonus participation.",
+    "description": "Combination of savings and protection with long-term corpus creation.",
+    "lock_in_period": "15 years",
+    "minimum_investment": 1000
+  },
+  {
+    "policy_name": "LIC Tech Term",
+    "min_term": "10 years",
+    "expected_return": 5.5,
+    "risk_level": "Low",
+    "benefits": "Pure term protection with optional riders.",
+    "description": "Low-cost life insurance policy designed for risk protection needs.",
+    "lock_in_period": "10 years",
+    "minimum_investment": 3000
+  },
+  {
+    "policy_name": "LIC New Endowment Plan",
+    "min_term": "12 years",
+    "expected_return": 6.2,
+    "risk_level": "Low",
+    "benefits": "Guaranteed savings with bonus participation and insurance cover.",
+    "description": "Traditional participating plan for long-term family protection and savings.",
+    "lock_in_period": "12 years",
+    "minimum_investment": 1500
+  }
+]
