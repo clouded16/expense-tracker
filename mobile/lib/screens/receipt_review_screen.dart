@@ -1,26 +1,38 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../services/api_service.dart';
+import 'package:mobile/features/ingestion/data/ingestion_repository.dart';
 
-class ReceiptReviewScreen extends StatefulWidget {
-  final Map<String, dynamic> ingestion;
-  const ReceiptReviewScreen({Key? key, required this.ingestion}) : super(key: key);
+class ReceiptReviewScreen extends ConsumerStatefulWidget {
+  final IngestionLog ingestion;
+
+  const ReceiptReviewScreen({
+    super.key,
+    required this.ingestion,
+  });
 
   @override
-  State<ReceiptReviewScreen> createState() => _ReceiptReviewScreenState();
+  ConsumerState<ReceiptReviewScreen> createState() =>
+      _ReceiptReviewScreenState();
 }
 
-class _ReceiptReviewScreenState extends State<ReceiptReviewScreen> {
+class _ReceiptReviewScreenState
+    extends ConsumerState<ReceiptReviewScreen> {
   late TextEditingController _merchantController;
   late TextEditingController _categoryController;
+
   bool _loading = false;
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    _merchantController = TextEditingController(text: widget.ingestion['parsed_merchant']?.toString() ?? widget.ingestion['merchant']?.toString() ?? '');
-    _categoryController = TextEditingController(text: widget.ingestion['parsed_category']?.toString() ?? widget.ingestion['category']?.toString() ?? '');
+
+    _merchantController =
+        TextEditingController(text: widget.ingestion.parsedMerchant ?? '');
+
+    _categoryController =
+        TextEditingController(text: widget.ingestion.parsedCategory ?? '');
   }
 
   @override
@@ -31,30 +43,60 @@ class _ReceiptReviewScreenState extends State<ReceiptReviewScreen> {
   }
 
   Future<void> _approve() async {
-    setState(() { _loading = true; _error = null; });
-    try {
-      final id = widget.ingestion['id'] is int ? widget.ingestion['id'] as int : int.parse(widget.ingestion['id'].toString());
-      await apiService.approveIngestion(id, merchantName: _merchantController.text.trim(), categoryName: _categoryController.text.trim());
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
 
-      // pop and signal success so callers can refresh
+    try {
+      final repo = ref.read(ingestionRepositoryProvider);
+
+      await repo.approve(
+        id: widget.ingestion.id,
+        merchantName: _merchantController.text.trim(),
+        categoryName: _categoryController.text.trim(),
+      );
+
+      ref.invalidate(ingestionReviewProvider);
+
       if (mounted) Navigator.pop(context, true);
     } catch (e) {
-      setState(() { _error = e.toString(); });
+      setState(() {
+        _error = e.toString();
+      });
     } finally {
-      if (mounted) setState(() { _loading = false; });
+      if (mounted) {
+        setState(() {
+          _loading = false;
+        });
+      }
     }
   }
 
   Future<void> _reject() async {
-    setState(() { _loading = true; _error = null; });
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
     try {
-      final id = widget.ingestion['id'] is int ? widget.ingestion['id'] as int : int.parse(widget.ingestion['id'].toString());
-      await apiService.rejectIngestion(id);
-      Navigator.pop(context, false);
+      final repo = ref.read(ingestionRepositoryProvider);
+
+      await repo.reject(widget.ingestion.id);
+
+      ref.invalidate(ingestionReviewProvider);
+
+      if (mounted) Navigator.pop(context, false);
     } catch (e) {
-      setState(() { _error = e.toString(); });
+      setState(() {
+        _error = e.toString();
+      });
     } finally {
-      if (mounted) setState(() { _loading = false; });
+      if (mounted) {
+        setState(() {
+          _loading = false;
+        });
+      }
     }
   }
 
@@ -72,27 +114,36 @@ class _ReceiptReviewScreenState extends State<ReceiptReviewScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Amount: ${ingestion['parsed_amount'] ?? ingestion['amount'] ?? ''}', style: const TextStyle(fontSize: 18)),
-                const SizedBox(height: 12),
+                Text(
+                  'Amount: ₹${ingestion.parsedAmount?.toStringAsFixed(2) ?? '-'}',
+                  style: const TextStyle(fontSize: 18),
+                ),
+                const SizedBox(height: 16),
                 TextField(
                   controller: _merchantController,
-                  decoration: const InputDecoration(labelText: 'Merchant'),
+                  decoration:
+                      const InputDecoration(labelText: 'Merchant'),
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: _categoryController,
-                  decoration: const InputDecoration(labelText: 'Category'),
+                  decoration:
+                      const InputDecoration(labelText: 'Category'),
                 ),
                 const SizedBox(height: 12),
                 Row(
                   children: [
                     const Text('Confidence: '),
-                    Text((ingestion['confidence_score'] ?? ingestion['confidence'] ?? '').toString()),
+                    Text(
+                        ingestion.confidenceScore.toStringAsFixed(2)),
                   ],
                 ),
                 if (_error != null) ...[
                   const SizedBox(height: 12),
-                  Text(_error!, style: const TextStyle(color: Colors.red)),
+                  Text(
+                    _error!,
+                    style: const TextStyle(color: Colors.red),
+                  ),
                 ],
                 const SizedBox(height: 16),
                 Row(
@@ -105,7 +156,14 @@ class _ReceiptReviewScreenState extends State<ReceiptReviewScreen> {
                     const SizedBox(width: 12),
                     ElevatedButton(
                       onPressed: _loading ? null : _approve,
-                      child: _loading ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2,)) : const Text('Approve'),
+                      child: _loading
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child:
+                                  CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text('Approve'),
                     ),
                   ],
                 ),

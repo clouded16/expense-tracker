@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../ingestion/data/ingestion_repository.dart';
 
 class IngestionReviewScreen extends ConsumerWidget {
-  const IngestionReviewScreen({Key? key}) : super(key: key);
+  const IngestionReviewScreen({super.key});
 
   Color _colorForConfidence(double score) {
     if (score >= 0.8) return Colors.green;
@@ -28,6 +28,11 @@ class IngestionReviewScreen extends ConsumerWidget {
             itemBuilder: (context, index) {
               final item = items[index];
 
+              final merchant = item.parsedMerchant ?? 'Unknown Merchant';
+              final category = item.parsedCategory ?? 'Uncategorized';
+              final amount = item.parsedAmount ?? 0.0;
+              final confidence = item.confidenceScore;
+
               return Card(
                 margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 child: Padding(
@@ -36,31 +41,39 @@ class IngestionReviewScreen extends ConsumerWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(item.parsedMerchant,
-                                    style: const TextStyle(
-                                        fontWeight: FontWeight.bold)),
+                                Text(
+                                  merchant,
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.bold),
+                                ),
                                 const SizedBox(height: 4),
-                                Text('${item.parsedCategory} - ₹${item.parsedAmount.toStringAsFixed(2)}'),
+                                Text(
+                                  '$category - ₹${amount.toStringAsFixed(2)}',
+                                ),
                                 const SizedBox(height: 6),
-                                Text('Created: ${item.createdAt.toLocal().toString()}'),
+                                Text(
+                                  'Created: ${item.createdAt.toLocal()}',
+                                  style: const TextStyle(fontSize: 12),
+                                ),
                               ],
                             ),
                           ),
                           const SizedBox(width: 8),
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 6),
                             decoration: BoxDecoration(
-                              color: _colorForConfidence(item.confidenceScore),
+                              color: _colorForConfidence(confidence),
                               borderRadius: BorderRadius.circular(12),
                             ),
                             child: Text(
-                              item.confidenceScore.toStringAsFixed(2),
+                              confidence.toStringAsFixed(2),
                               style: const TextStyle(color: Colors.white),
                             ),
                           ),
@@ -72,15 +85,19 @@ class IngestionReviewScreen extends ConsumerWidget {
                         children: [
                           OutlinedButton(
                             onPressed: () async {
-                              final repo = ref.read(ingestionRepositoryProvider);
+                              final repo =
+                                  ref.read(ingestionRepositoryProvider);
+                              final messenger =
+                                  ScaffoldMessenger.of(context);
                               try {
                                 await repo.reject(item.id);
                                 ref.invalidate(ingestionReviewProvider);
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('Rejected')),
+                                messenger.showSnackBar(
+                                  const SnackBar(
+                                      content: Text('Rejected')),
                                 );
                               } catch (e) {
-                                ScaffoldMessenger.of(context).showSnackBar(
+                                messenger.showSnackBar(
                                   SnackBar(content: Text('Error: $e')),
                                 );
                               }
@@ -90,15 +107,23 @@ class IngestionReviewScreen extends ConsumerWidget {
                           const SizedBox(width: 12),
                           ElevatedButton(
                             onPressed: () async {
-                              final repo = ref.read(ingestionRepositoryProvider);
+                              final repo =
+                                  ref.read(ingestionRepositoryProvider);
+                              final messenger =
+                                  ScaffoldMessenger.of(context);
                               try {
-                                await repo.approve(item.id);
+                                await repo.approve(
+                                  id: item.id,
+                                  merchantName: item.parsedMerchant ?? 'Unknown Merchant',
+                                  categoryName: item.parsedCategory ?? 'Uncategorized',
+                                );
                                 ref.invalidate(ingestionReviewProvider);
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('Approved')),
+                                messenger.showSnackBar(
+                                  const SnackBar(
+                                      content: Text('Approved')),
                                 );
                               } catch (e) {
-                                ScaffoldMessenger.of(context).showSnackBar(
+                                messenger.showSnackBar(
                                   SnackBar(content: Text('Error: $e')),
                                 );
                               }
@@ -114,7 +139,8 @@ class IngestionReviewScreen extends ConsumerWidget {
             },
           );
         },
-        loading: () => const Center(child: CircularProgressIndicator()),
+        loading: () =>
+            const Center(child: CircularProgressIndicator()),
         error: (err, stack) => Center(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -122,7 +148,8 @@ class IngestionReviewScreen extends ConsumerWidget {
               Text('Error: $err'),
               const SizedBox(height: 12),
               ElevatedButton(
-                onPressed: () => ref.refresh(ingestionReviewProvider),
+                onPressed: () =>
+                    ref.refresh(ingestionReviewProvider),
                 child: const Text('Retry'),
               ),
             ],

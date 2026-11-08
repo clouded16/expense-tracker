@@ -1,9 +1,9 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import '../../../core/api_client.dart';
-import '../../expenses/presentation/expense_list_screen.dart';
-import '../../dashboard/presentation/dashboard_screen.dart';
-import '../../expenses/data/expense_repository.dart';
+
 
 enum AuthStatus {
   unknown,
@@ -26,7 +26,7 @@ class AuthController extends StateNotifier<AuthStatus> {
   Future<void> _initialize() async {
     final refreshToken = await storage.read(key: 'refresh_token');
 
-    print("Startup refresh token: $refreshToken");
+    debugPrint("Startup refresh token: ${refreshToken != null ? '[present]' : '[null]'}");
 
     if (refreshToken == null) {
       state = AuthStatus.unauthenticated;
@@ -37,7 +37,7 @@ class AuthController extends StateNotifier<AuthStatus> {
 
     final success = await api.tryRefreshOnStartup();
 
-    print("Startup refresh result: $success");
+    debugPrint("Startup refresh result: $success");
 
     state = success
         ? AuthStatus.authenticated
@@ -61,5 +61,8 @@ class AuthController extends StateNotifier<AuthStatus> {
     } catch (_) {}
 
     await storage.deleteAll();
+
+    final googleSignIn = GoogleSignIn();
+    await googleSignIn.signOut();
   }
 }

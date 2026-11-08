@@ -17,27 +17,40 @@ class IngestionRepository {
   IngestionRepository(this._client);
 
   Future<List<IngestionLog>> getNeedsReview() async {
-    final response = await _client.get('/ingestion?status=needs_review');
+    final response =
+        await _client.get('/ingestion?status=needs_review');
 
     return (response.data as List)
         .map((e) => IngestionLog.fromJson(e))
         .toList();
   }
 
-  Future<void> approve(int id) async {
-    await _client.dio.patch('/ingestion/$id/approve');
+  Future<void> approve({
+    required int id,
+    required String merchantName,
+    required String categoryName,
+  }) async {
+    await _client.patch(
+      '/ingestion/$id/approve',
+      data: {
+        'merchant_name': merchantName,
+        'category_name': categoryName,
+      },
+    );
   }
 
   Future<void> reject(int id) async {
-    await _client.dio.patch('/ingestion/$id/reject');
+    await _client.patch(
+      '/ingestion/$id/reject',
+    );
   }
 }
 
 class IngestionLog {
   final int id;
-  final double parsedAmount;
-  final String parsedCategory;
-  final String parsedMerchant;
+  final double? parsedAmount;
+  final String? parsedCategory;
+  final String? parsedMerchant;
   final double confidenceScore;
   final DateTime createdAt;
 
@@ -55,9 +68,9 @@ class IngestionLog {
       id: json['id'] as int,
       parsedAmount: (json['parsed_amount'] is num)
           ? (json['parsed_amount'] as num).toDouble()
-          : double.tryParse(json['parsed_amount'].toString()) ?? 0.0,
-      parsedCategory: json['parsed_category']?.toString() ?? '',
-      parsedMerchant: json['parsed_merchant']?.toString() ?? '',
+          : double.tryParse(json['parsed_amount']?.toString() ?? ''),
+      parsedCategory: json['parsed_category']?.toString(),
+      parsedMerchant: json['parsed_merchant']?.toString(),
       confidenceScore: (json['confidence_score'] is num)
           ? (json['confidence_score'] as num).toDouble()
           : double.tryParse(json['confidence_score']?.toString() ?? '0') ?? 0.0,

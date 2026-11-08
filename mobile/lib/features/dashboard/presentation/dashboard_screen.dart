@@ -2,11 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../expenses/data/expense_repository.dart';
 import '../../expenses/domain/expense.dart';
-import '../../analytics/domain/insight.dart';
 import '../../auth/application/auth_controller.dart';
 import '../../../core/api_client.dart';
 import '../../ingestion/presentation/ingestion_review_screen.dart';
-import '../../expenses/data/expense_repository.dart';
 
 final budgetProvider = FutureProvider<double>((ref) async {
   final authStatus = ref.watch(authControllerProvider);
@@ -29,7 +27,6 @@ final dashboardStatsProvider =
       'totalSpent': 0.0,
       'budget': 0.0,
       'recent': <Expense>[],
-      'insights': <Insight>[],
     };
   }
 
@@ -54,7 +51,6 @@ final dashboardStatsProvider =
     'totalSpent': total,
     'budget': budget,
     'recent': sortedExpenses.take(5).toList(),
-    'insights': <Insight>[],
   };
 });
 
@@ -82,7 +78,6 @@ class DashboardScreen extends ConsumerWidget {
           final total = stats['totalSpent'] as double;
           final budget = stats['budget'] as double;
           final recent = stats['recent'] as List<Expense>;
-          final insights = stats['insights'] as List<Insight>;
 
           final progress =
               budget == 0 ? 0.0 : (total / budget).clamp(0.0, 1.0);
@@ -218,15 +213,16 @@ class DashboardScreen extends ConsumerWidget {
                     double.tryParse(controller.text);
                 if (value == null || value <= 0) return;
 
+                final nav = Navigator.of(context);
                 final api = ref.read(apiClientProvider);
                 await api.post('/budget', {
-                  'amount': value,
+                  'monthly_amount': value,
                 });
 
                 ref.invalidate(budgetProvider);
                 ref.invalidate(dashboardStatsProvider);
 
-                Navigator.pop(context);
+                nav.pop();
               },
               child: const Text('Save'),
             ),

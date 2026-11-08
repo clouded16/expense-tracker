@@ -1,0 +1,13 @@
+# Copy this file to android/key.properties and fill in your values.
+# key.properties is gitignored — NEVER commit the real file.
+#
+# Generate the keystore with:
+#   keytool -genkey -v -keystore cashscope-release.keystore \
+#     -alias cashscope -keyalg RSA -keysize 2048 -validity 36500
+#
+# storeFile is relative to the android/ directory, or use an absolute path.
+
+storePassword=YOUR_KEYSTORE_PASSWORD
+keyPassword=YOUR_KEY_PASSWORD
+keyAlias=cashscope
+storeFile=../cashscope-release.keystore

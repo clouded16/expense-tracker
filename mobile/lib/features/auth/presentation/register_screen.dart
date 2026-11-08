@@ -49,6 +49,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
 
     } catch (e) {
       debugPrint("Register error: $e");
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Registration failed")),
       );

@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../data/expense_repository.dart';
-import '../domain/expense.dart';
 import '../../dashboard/presentation/dashboard_screen.dart';
 
 class ExpenseListScreen extends ConsumerStatefulWidget {
@@ -149,6 +148,9 @@ class _ExpenseListScreenState
                             constraints:
                                 const BoxConstraints(),
                             onPressed: () async {
+                              final messenger =
+                                  ScaffoldMessenger.of(
+                                      context);
                               final confirm =
                                   await showDialog<
                                       bool>(
@@ -194,16 +196,12 @@ class _ExpenseListScreenState
                                 ref.invalidate(
                                     dashboardStatsProvider);
 
-                                if (mounted) {
-                                  ScaffoldMessenger.of(
-                                          context)
-                                      .showSnackBar(
-                                    const SnackBar(
-                                      content: Text(
-                                          'Expense deleted'),
-                                    ),
-                                  );
-                                }
+                                messenger.showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                        'Expense deleted'),
+                                  ),
+                                );
                               }
                             },
                           ),

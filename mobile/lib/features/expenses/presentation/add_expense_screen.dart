@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../data/expense_repository.dart';
 import '../domain/expense.dart';
-import 'package:mobile/features/expenses/presentation/expense_list_screen.dart'; 
 import 'package:mobile/features/dashboard/presentation/dashboard_screen.dart';
 import 'package:mobile/screens/receipt_upload_screen.dart';
 
@@ -27,7 +26,9 @@ class _AddExpenseScreenState extends ConsumerState<AddExpenseScreen> {
 
   Future<void> _submit() async {
       if (_amountController.text.isEmpty ||
-          _categoryController.text.isEmpty) return;
+          _categoryController.text.isEmpty) {
+        return;
+      }
 
       setState(() => _isLoading = true);
 
@@ -108,6 +109,7 @@ class _AddExpenseScreenState extends ConsumerState<AddExpenseScreen> {
               icon: const Icon(Icons.camera_alt),
               label: const Text('Scan Receipt'),
               onPressed: () async {
+                final router = GoRouter.of(context);
                 final result = await Navigator.push<bool?>(
                   context,
                   MaterialPageRoute(
@@ -116,10 +118,10 @@ class _AddExpenseScreenState extends ConsumerState<AddExpenseScreen> {
                 );
 
                 // If OCR created expense already → refresh and go back
-                if (result == true) {
+                if (result == true && mounted) {
                   ref.invalidate(expensesProvider);
                   ref.invalidate(dashboardStatsProvider);
-                  if (mounted) context.go('/dashboard');
+                  router.go('/dashboard');
                 }
               },
             ),

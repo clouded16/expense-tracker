@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter/foundation.dart';
@@ -7,7 +8,7 @@ final apiClientProvider = Provider((ref) => ApiClient());
 
 class ApiClient {
   static const String baseUrl =
-    String.fromEnvironment('API_BASE_URL', defaultValue: 'http://localhost:8000');
+    String.fromEnvironment('API_BASE_URL', defaultValue: 'https://cashscope.duckdns.org');
 
   final Dio dio;
   final FlutterSecureStorage storage;
@@ -15,7 +16,7 @@ class ApiClient {
   ApiClient()
       : dio = Dio(BaseOptions(baseUrl: baseUrl)),
         storage = const FlutterSecureStorage() {
-          print("API Client initialized with base URL: $baseUrl");
+          debugPrint("ApiClient initialized → $baseUrl");
     dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
@@ -110,4 +111,29 @@ class ApiClient {
   Future<Response> post(String path, dynamic data) => dio.post(path, data: data);
   Future<Response> put(String path, dynamic data) => dio.put(path, data: data);
   Future<Response> delete(String path) => dio.delete(path);
+  Future<Response> patch(
+    String path, {
+    dynamic data,
+    Map<String, dynamic>? queryParameters,
+  }) async {
+    return dio.patch(
+      path,
+      data: data,
+      queryParameters: queryParameters,
+    );
+  }
+
+  Future<Response> uploadFile(
+    String path,
+    File file, {
+    String fieldName = 'file',
+  }) async {
+    final formData = FormData.fromMap({
+      fieldName: await MultipartFile.fromFile(
+        file.path,
+        filename: file.path.split(RegExp(r'[/\\]')).last,
+      ),
+    });
+    return dio.post(path, data: formData);
+  }
 }

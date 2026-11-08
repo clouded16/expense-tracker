@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:dio/dio.dart';
 import '../../../core/api_client.dart';
 import '../application/auth_controller.dart';
+import '../../../services/google_auth_service.dart';
 
 // Simple provider for auth logic (to be moved to domain later)
 
@@ -54,6 +54,38 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
   }
 
+  Future<void> _loginWithGoogle() async {
+    setState(() => _isLoading = true);
+
+    try {
+      final googleService = GoogleAuthService();
+      final response = await googleService.signIn();
+
+      if (response == null) {
+        throw Exception("Google login failed");
+      }
+
+      final access = response['access_token'];
+      final refresh = response['refresh_token'];
+
+      final apiClient = ref.read(apiClientProvider);
+
+      await apiClient.storage.write(key: 'auth_token', value: access);
+      await apiClient.storage.write(key: 'refresh_token', value: refresh);
+
+      ref.read(authControllerProvider.notifier).loginSuccess();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Google Login Failed: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -84,6 +116,16 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   child: _isLoading 
                     ? const CircularProgressIndicator() 
                     : const Text('Login'),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: OutlinedButton(
+                  onPressed: _isLoading ? null : _loginWithGoogle,
+                  child: const Text('Sign in with Google'),
                 ),
               ),
               const SizedBox(height: 16),
