@@ -1,7 +1,7 @@
-from fastapi import FastAPI, Depends, HTTPException
+﻿from fastapi import FastAPI, Depends, HTTPException, File, UploadFile
 from sqlalchemy.orm import Session
 from models.refresh_token_orm import RefreshToken
-from database import get_db, engine
+from database import ensure_schema_updates, get_db, engine
 from models.expense_orm import Expense
 from models.auth import RegisterRequest, AuthResponse, RefreshRequest, LoginRequest
 from models.user_orm import User
@@ -14,6 +14,7 @@ from models.category_orm import Category
 from models.merchant_orm import Merchant
 from models.source_orm import Source
 from models.expense import ExpenseCreate, ExpenseResponse
+from models.ocr import OCRScanResponse
 from models.expense_orm import Expense
 from models.goal import GoalCreate, GoalResponse
 from models.goal_orm import Goal
@@ -28,8 +29,15 @@ from models.feedback import FeedbackCreate
 from models.feedback_orm import Feedback
 from services.personalization import apply_personalization
 from services.ai_coach import rephrase_insights
+from routes.analytics_router import router as analytics_router
+from routes.investment import router as investment_router
+from routes.investment_router import router as live_investment_router
+from routes.auth import router as auth_router
 from jose import jwt, JWTError
 import logging
+import tempfile
+
+import os
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
@@ -39,19 +47,34 @@ logger = logging.getLogger("expense-tracker")
 
 from models.budget_orm import Budget
 from models.budget import BudgetRequest
-
+from dotenv import load_dotenv
+load_dotenv()
 from sqlalchemy import text
 from sqlalchemy import and_
 from datetime import datetime, timezone
 from passlib.context import CryptContext
 from models.base import Base
+from services.ocr_service import OCRProcessingError, OCRService
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+from services.auth import get_current_user
+from fastapi import FastAPI
+from fastapi.security import HTTPBearer
 
 
 
-app = FastAPI()
+security = HTTPBearer()
+
+app = FastAPI(
+    swagger_ui_parameters={"persistAuthorization": True}
+)
+ocr_service = OCRService()
+app.include_router(analytics_router)
+app.include_router(investment_router)
+app.include_router(live_investment_router)
+app.include_router(auth_router)
 
 Base.metadata.create_all(bind=engine)
+ensure_schema_updates()
 
 @app.get("/health")
 def health_check():
@@ -74,6 +97,39 @@ def health_check():
 @app.get("/")
 def root():
     return {"message": "Hello, the server is running"}
+
+
+@app.post("/ocr/scan-receipt", response_model=OCRScanResponse)
+async def scan_receipt(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+):
+    del current_user
+
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Only image uploads are supported")
+
+    temp_path = None
+    try:
+        suffix = os.path.splitext(file.filename or "receipt.jpg")[1] or ".jpg"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+            contents = await file.read()
+            temp_file.write(contents)
+            temp_path = temp_file.name
+
+        result = ocr_service.scan_receipt(temp_path)
+        return OCRScanResponse(**result)
+    except OCRProcessingError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Unexpected OCR scan failure", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"OCR scan failed: {exc}")
+    finally:
+        await file.close()
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
 
 
 @app.post("/expenses", response_model=ExpenseResponse)
@@ -457,7 +513,7 @@ def register_user(data: RegisterRequest, db: Session = Depends(get_db)):
     access_token = create_access_token(user)
     refresh_token, expires_at, jti= create_refresh_token(user.id)
 
-    # 🔐 Hash refresh token before storing
+    # ðŸ” Hash refresh token before storing
     hashed_refresh = hash_password(refresh_token)
 
     db_refresh = RefreshToken(
@@ -496,7 +552,7 @@ def refresh_token(data: RefreshRequest, db: Session = Depends(get_db)):
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
-    # 🔎 Find latest active refresh token for user
+    # ðŸ”Ž Find latest active refresh token for user
     db_token = (
         db.query(RefreshToken)
         .filter(
@@ -511,7 +567,7 @@ def refresh_token(data: RefreshRequest, db: Session = Depends(get_db)):
     if not db_token:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
-    # 🚨 REUSE DETECTION
+    # ðŸš¨ REUSE DETECTION
     if db_token.revoked:
         # Revoke ALL active sessions for this user
         db.query(RefreshToken).filter(
@@ -541,11 +597,11 @@ def refresh_token(data: RefreshRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="User not found")
 
 
-    # 🔄 Rotation: revoke old
+    # ðŸ”„ Rotation: revoke old
     db_token.revoked = True
     db.commit()
 
-    # 🔁 Issue new tokens
+    # ðŸ” Issue new tokens
     new_access = create_access_token(user)
     new_refresh, expires_at , new_jti = create_refresh_token(user_id)
 
@@ -611,10 +667,10 @@ def logout_all(data: RefreshRequest, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
 
-    # 🔐 Invalidate ALL access tokens
+    # ðŸ” Invalidate ALL access tokens
     user.token_version += 1
 
-    # 🔐 Revoke ALL refresh tokens
+    # ðŸ” Revoke ALL refresh tokens
     db.query(RefreshToken).filter(
         RefreshToken.user_id == user_id,
         RefreshToken.revoked == False
@@ -639,10 +695,10 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
     if not verify_password(data.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    # 🔹 Create access token
+    # ðŸ”¹ Create access token
     access_token = create_access_token(user)
     
-    # 🔹 Create refresh token
+    # ðŸ”¹ Create refresh token
     refresh_token, expires_at, jti = create_refresh_token(user.id)
 
     hashed_refresh = hash_password(refresh_token)
@@ -703,5 +759,6 @@ def set_budget(
     db.commit()
 
     return {"monthly_amount": float(budget.monthly_amount)}
+
 
 

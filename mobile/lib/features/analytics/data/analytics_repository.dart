@@ -24,7 +24,22 @@ class AnalyticsRepository {
   }
 
   Future<List<Insight>> getInsights() async {
-    final response = await _api.get('/analytics/insights');
-    return (response.data as List).map((i) => Insight.fromJson(i)).toList();
+    final response = await _api.get('/analytics/summary');
+    final payload = response.data as Map<String, dynamic>;
+    final rawInsights = (payload['insights'] as List?) ?? const [];
+    final now = DateTime.now().toIso8601String();
+
+    return rawInsights
+        .asMap()
+        .entries
+        .map((entry) => Insight.fromJson({
+              'id': entry.key + 1,
+              'type': 'trend',
+              'title': 'Insight ${entry.key + 1}',
+              'message': entry.value.toString(),
+              'metadata': null,
+              'generated_at': now,
+            }))
+        .toList();
   }
 }

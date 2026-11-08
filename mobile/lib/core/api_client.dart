@@ -1,15 +1,12 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 final apiClientProvider = Provider((ref) => ApiClient());
 
 class ApiClient {
-  static String get baseUrl {
-    if (kIsWeb) return 'http://localhost:8000';
-    return 'http://192.168.29.27:8000'; // your PC IP
-  }
+  static const String baseUrl =
+    String.fromEnvironment('API_BASE_URL', defaultValue: 'http://10.175.43.25:8000');
 
   final Dio dio;
   final FlutterSecureStorage storage;
@@ -28,7 +25,7 @@ class ApiClient {
         },
 
         onError: (error, handler) async {
-          if (error.response?.statusCode == 401) {
+          if (error.response?.statusCode == 401 && error.requestOptions.path != '/auth/refresh') {
             final refreshed = await _attemptRefresh();
 
             if (refreshed) {
